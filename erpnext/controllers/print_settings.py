@@ -11,11 +11,14 @@ def set_print_templates_for_item_table(doc, settings):
 		"items": {
 			"qty": "templates/print_formats/includes/item_table_qty.html",
 			"serial_and_batch_bundle": "templates/print_formats/includes/serial_and_batch_bundle.html",
-		}
+		},
+		"packed_items": {
+			"serial_and_batch_bundle": "templates/print_formats/includes/serial_and_batch_bundle.html",
+		},
+		"supplied_items": {
+			"serial_and_batch_bundle": "templates/print_formats/includes/serial_and_batch_bundle.html",
+		},
 	}
-
-	if doc.meta.get_field("items"):
-		doc.meta.get_field("items").hide_in_print_layout = ["uom", "stock_uom"]
 
 	doc.flags.compact_item_fields = ["description", "qty", "rate", "amount"]
 
@@ -43,7 +46,7 @@ def set_print_templates_for_taxes(doc, settings):
 
 
 def format_columns(display_columns, compact_fields):
-	compact_fields = compact_fields + ["image", "item_code", "item_name"]
+	compact_fields = [*compact_fields, "image", "item_code", "item_name"]
 	final_columns = []
 	for column in display_columns:
 		if column not in compact_fields:

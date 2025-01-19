@@ -94,12 +94,6 @@ def get_data(filters):
 
 	accounts, accounts_by_name, parent_children_map = filter_accounts(accounts)
 
-	min_lft, max_rgt = frappe.db.sql(
-		"""select min(lft), max(rgt) from `tabAccount`
-		where company=%s""",
-		(filters.company,),
-	)[0]
-
 	gl_entries_by_account = {}
 
 	opening_balances = get_opening_balances(filters)
@@ -112,14 +106,15 @@ def get_data(filters):
 		filters.company,
 		filters.from_date,
 		filters.to_date,
-		min_lft,
-		max_rgt,
 		filters,
 		gl_entries_by_account,
-		ignore_closing_entries=not flt(filters.with_period_closing_entry),
+		root_lft=None,
+		root_rgt=None,
+		ignore_closing_entries=not flt(filters.with_period_closing_entry_for_current_period),
+		ignore_opening_entries=True,
 	)
 
-	calculate_values(accounts, gl_entries_by_account, opening_balances)
+	calculate_values(accounts, gl_entries_by_account, opening_balances, filters.get("show_net_values"))
 	accumulate_values_into_parents(accounts, accounts_by_name)
 
 	data = prepare_data(accounts, filters, parent_children_map, company_currency)
@@ -141,13 +136,19 @@ def get_opening_balances(filters):
 def get_rootwise_opening_balances(filters, report_type):
 	gle = []
 
-	last_period_closing_voucher = frappe.db.get_all(
-		"Period Closing Voucher",
-		filters={"docstatus": 1, "company": filters.company, "posting_date": ("<", filters.from_date)},
-		fields=["posting_date", "name"],
-		order_by="posting_date desc",
-		limit=1,
+	last_period_closing_voucher = ""
+	ignore_closing_balances = frappe.db.get_single_value(
+		"Accounts Settings", "ignore_account_closing_balance"
 	)
+
+	if not ignore_closing_balances:
+		last_period_closing_voucher = frappe.db.get_all(
+			"Period Closing Voucher",
+			filters={"docstatus": 1, "company": filters.company, "period_end_date": ("<", filters.from_date)},
+			fields=["period_end_date", "name"],
+			order_by="period_end_date desc",
+			limit=1,
+		)
 
 	accounting_dimensions = get_accounting_dimensions(as_list=False)
 
@@ -159,10 +160,10 @@ def get_rootwise_opening_balances(filters, report_type):
 			accounting_dimensions,
 			period_closing_voucher=last_period_closing_voucher[0].name,
 		)
-		if getdate(last_period_closing_voucher[0].posting_date) < getdate(
-			add_days(filters.from_date, -1)
-		):
-			start_date = add_days(last_period_closing_voucher[0].posting_date, 1)
+
+		# Report getting generate from the mid of a fiscal year
+		if getdate(last_period_closing_voucher[0].period_end_date) < getdate(add_days(filters.from_date, -1)):
+			start_date = add_days(last_period_closing_voucher[0].period_end_date, 1)
 			gle += get_opening_balance(
 				"GL Entry", filters, report_type, accounting_dimensions, start_date=start_date
 			)
@@ -218,9 +219,18 @@ def get_opening_balance(
 		)
 	else:
 		if start_date:
-			opening_balance = opening_balance.where(closing_balance.posting_date >= start_date)
+			opening_balance = opening_balance.where(
+				(closing_balance.posting_date >= start_date)
+				& (closing_balance.posting_date < filters.from_date)
+			)
 			opening_balance = opening_balance.where(closing_balance.is_opening == "No")
-		opening_balance = opening_balance.where(closing_balance.posting_date < filters.from_date)
+		else:
+			opening_balance = opening_balance.where(
+				(closing_balance.posting_date < filters.from_date) | (closing_balance.is_opening == "Yes")
+			)
+
+	if doctype == "GL Entry":
+		opening_balance = opening_balance.where(closing_balance.is_cancelled == 0)
 
 	if (
 		not filters.show_unclosed_fy_pl_balances
@@ -229,19 +239,17 @@ def get_opening_balance(
 	):
 		opening_balance = opening_balance.where(closing_balance.posting_date >= filters.year_start_date)
 
-	if not flt(filters.with_period_closing_entry):
+	if not flt(filters.with_period_closing_entry_for_opening):
 		if doctype == "Account Closing Balance":
 			opening_balance = opening_balance.where(closing_balance.is_period_closing_voucher_entry == 0)
 		else:
-			opening_balance = opening_balance.where(
-				closing_balance.voucher_type != "Period Closing Voucher"
-			)
+			opening_balance = opening_balance.where(closing_balance.voucher_type != "Period Closing Voucher")
 
 	if filters.cost_center:
 		lft, rgt = frappe.db.get_value("Cost Center", filters.cost_center, ["lft", "rgt"])
 		cost_center = frappe.qb.DocType("Cost Center")
 		opening_balance = opening_balance.where(
-			closing_balance.cost_center.in_(
+			closing_balance.cost_center.isin(
 				frappe.qb.from_(cost_center)
 				.select("name")
 				.where((cost_center.lft >= lft) & (cost_center.rgt <= rgt))
@@ -255,9 +263,7 @@ def get_opening_balance(
 		company_fb = frappe.get_cached_value("Company", filters.company, "default_finance_book")
 
 		if filters.finance_book and company_fb and cstr(filters.finance_book) != cstr(company_fb):
-			frappe.throw(
-				_("To use a different finance book, please uncheck 'Include Default Book Entries'")
-			)
+			frappe.throw(_("To use a different finance book, please uncheck 'Include Default FB Entries'"))
 
 		opening_balance = opening_balance.where(
 			(closing_balance.finance_book.isin([cstr(filters.finance_book), cstr(company_fb), ""]))
@@ -292,7 +298,7 @@ def get_opening_balance(
 	return gle
 
 
-def calculate_values(accounts, gl_entries_by_account, opening_balances):
+def calculate_values(accounts, gl_entries_by_account, opening_balances, show_net_values):
 	init = {
 		"opening_debit": 0.0,
 		"opening_credit": 0.0,
@@ -317,7 +323,8 @@ def calculate_values(accounts, gl_entries_by_account, opening_balances):
 		d["closing_debit"] = d["opening_debit"] + d["debit"]
 		d["closing_credit"] = d["opening_credit"] + d["credit"]
 
-		prepare_opening_closing(d)
+		if show_net_values:
+			prepare_opening_closing(d)
 
 
 def calculate_total_row(accounts, company_currency):
@@ -357,7 +364,7 @@ def prepare_data(accounts, filters, parent_children_map, company_currency):
 
 	for d in accounts:
 		# Prepare opening closing for group account
-		if parent_children_map.get(d.account):
+		if parent_children_map.get(d.account) and filters.get("show_net_values"):
 			prepare_opening_closing(d)
 
 		has_value = False
@@ -369,7 +376,7 @@ def prepare_data(accounts, filters, parent_children_map, company_currency):
 			"to_date": filters.to_date,
 			"currency": company_currency,
 			"account_name": (
-				"{} - {}".format(d.account_number, d.account_name) if d.account_number else d.account_name
+				f"{d.account_number} - {d.account_name}" if d.account_number else d.account_name
 			),
 		}
 
