@@ -11,6 +11,39 @@ from frappe.utils import cint
 
 
 class SellingSettings(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		allow_against_multiple_purchase_orders: DF.Check
+		allow_multiple_items: DF.Check
+		allow_negative_rates_for_items: DF.Check
+		allow_sales_order_creation_for_expired_quotation: DF.Check
+		blanket_order_allowance: DF.Float
+		cust_master_name: DF.Literal["Customer Name", "Naming Series", "Auto Name"]
+		customer_group: DF.Link | None
+		dn_required: DF.Literal["No", "Yes"]
+		dont_reserve_sales_order_qty_on_sales_return: DF.Check
+		editable_bundle_item_rates: DF.Check
+		editable_price_list_rate: DF.Check
+		enable_cutoff_date_on_bulk_delivery_note_creation: DF.Check
+		enable_discount_accounting: DF.Check
+		hide_tax_id: DF.Check
+		maintain_same_rate_action: DF.Literal["Stop", "Warn"]
+		maintain_same_sales_rate: DF.Check
+		role_to_override_stop_action: DF.Link | None
+		sales_update_frequency: DF.Literal["Monthly", "Each Transaction", "Daily"]
+		selling_price_list: DF.Link | None
+		so_required: DF.Literal["No", "Yes"]
+		territory: DF.Link | None
+		use_server_side_reactivity: DF.Check
+		validate_selling_price: DF.Check
+	# end: auto-generated types
+
 	def on_update(self):
 		self.toggle_hide_tax_id()
 		self.toggle_editable_rate_for_bundle_items()
@@ -37,15 +70,15 @@ class SellingSettings(Document):
 		)
 
 	def toggle_hide_tax_id(self):
-		self.hide_tax_id = cint(self.hide_tax_id)
+		_hide_tax_id = cint(self.hide_tax_id)
 
 		# Make property setters to hide tax_id fields
 		for doctype in ("Sales Order", "Sales Invoice", "Delivery Note"):
 			make_property_setter(
-				doctype, "tax_id", "hidden", self.hide_tax_id, "Check", validate_fields_for_doctype=False
+				doctype, "tax_id", "hidden", _hide_tax_id, "Check", validate_fields_for_doctype=False
 			)
 			make_property_setter(
-				doctype, "tax_id", "print_hide", self.hide_tax_id, "Check", validate_fields_for_doctype=False
+				doctype, "tax_id", "print_hide", _hide_tax_id, "Check", validate_fields_for_doctype=False
 			)
 
 	def toggle_editable_rate_for_bundle_items(self):

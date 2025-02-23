@@ -10,6 +10,27 @@ from erpnext.accounts.doctype.account.account import merge_account
 
 
 class LedgerMerge(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		from erpnext.accounts.doctype.ledger_merge_accounts.ledger_merge_accounts import (
+			LedgerMergeAccounts,
+		)
+
+		account: DF.Link
+		account_name: DF.Data
+		company: DF.Link
+		is_group: DF.Check
+		merge_accounts: DF.Table[LedgerMergeAccounts]
+		root_type: DF.Literal["", "Asset", "Liability", "Income", "Expense", "Equity"]
+		status: DF.Literal["Pending", "Success", "Partial Success", "Error"]
+	# end: auto-generated types
+
 	def start_merge(self):
 		from frappe.utils.background_jobs import enqueue
 		from frappe.utils.scheduler import is_scheduler_inactive
@@ -48,9 +69,6 @@ def start_merge(docname):
 				merge_account(
 					row.account,
 					ledger_merge.account,
-					ledger_merge.is_group,
-					ledger_merge.root_type,
-					ledger_merge.company,
 				)
 				row.db_set("merged", 1)
 				frappe.db.commit()
